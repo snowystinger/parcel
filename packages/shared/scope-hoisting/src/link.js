@@ -643,7 +643,7 @@ export function link({
         // not in the current bundle:
         path.pushContainer(
           'body',
-          [...referencedAssets]
+          ([...referencedAssets]: Array<Asset>)
             .filter(a => !a.meta.shouldWrap)
             .map(a => {
               return FAKE_INIT_TEMPLATE({
@@ -652,6 +652,8 @@ export function link({
               });
             }),
         );
+
+        path.scope.crawl();
 
         // Generate exports
         let exported = format.generateExports(
@@ -662,7 +664,6 @@ export function link({
           replacements,
           options,
         );
-        path.scope.crawl();
 
         treeShake(path.scope, exported);
       },
