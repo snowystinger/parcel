@@ -1,6 +1,9 @@
 // @flow
 import type {Asset, MutableAsset, Bundle, BundleGraph} from '@parcel/types';
+import type {Diagnostic} from '@parcel/diagnostic';
+import type {Node} from '@babel/types';
 
+import ThrowableDiagnostic from '@parcel/diagnostic';
 import * as t from '@babel/types';
 import invariant from 'assert';
 
@@ -66,4 +69,33 @@ export function isReferenced(bundle: Bundle, bundleGraph: BundleGraph) {
 export function assertString(v: mixed): string {
   invariant(typeof v === 'string');
   return v;
+}
+
+export function getThrowableDiagnosticForNode(
+  message: string,
+  filePath: string,
+  node: Node,
+) {
+  let diagnostic: Diagnostic = {
+    message,
+    filePath: filePath,
+    language: 'js',
+  };
+  if (node.loc) {
+    diagnostic.codeFrame = {
+      codeHighlights: {
+        start: {
+          line: node.loc.start.line,
+          column: node.loc.start.column + 1,
+        },
+        // These two cancel out:
+        // - Babel's columns are exclusive, ours are inclusive
+        // - Babel has 0-based columns, ours are 1-based
+        end: node.loc.end,
+      },
+    };
+  }
+  return new ThrowableDiagnostic({
+    diagnostic,
+  });
 }

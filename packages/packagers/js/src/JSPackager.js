@@ -47,8 +47,8 @@ export default new Packager({
     if (bundle.env.scopeHoist) {
       let ast = await concat({bundle, bundleGraph, options});
       ast = link({bundle, bundleGraph, ast, options});
-
       let {contents, map} = generate(bundleGraph, bundle, ast, options);
+
       return replaceReferences({
         contents:
           contents +
