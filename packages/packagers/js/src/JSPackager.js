@@ -45,7 +45,7 @@ export default new Packager({
 
     // If scope hoisting is enabled, we use a different code path.
     if (bundle.env.scopeHoist) {
-      let ast = await concat(bundle, bundleGraph);
+      let ast = await concat({bundle, bundleGraph, options});
       ast = link({bundle, bundleGraph, ast, options});
 
       let {contents, map} = generate(bundleGraph, bundle, ast, options);
