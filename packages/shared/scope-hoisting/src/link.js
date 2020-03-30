@@ -11,10 +11,11 @@ import type {ExternalModule, ExternalBundle} from './types';
 import type {
   Expression,
   File,
+  FunctionDeclaration,
   Identifier,
   LVal,
-  Statement,
   ObjectProperty,
+  Statement,
   StringLiteral,
   VariableDeclaration,
 } from '@babel/types';
@@ -57,7 +58,7 @@ const REQUIRE_RESOLVE_CALL_TEMPLATE = template.expression<
 >('require.resolve(ID)');
 const FAKE_INIT_TEMPLATE = template.statement<
   {|INIT: Identifier, EXPORTS: Identifier|},
-  Statement,
+  FunctionDeclaration,
 >(`function INIT(){
   return EXPORTS;
 }`);
@@ -305,6 +306,15 @@ export function link({
       }
 
       specifiers.set(imported, renamed);
+
+      // a variable so we can track the scope
+      let [decl] = programScope.path.unshiftContainer(
+        'body',
+        t.variableDeclaration('var', [
+          t.variableDeclarator(t.identifier(renamed)),
+        ]),
+      );
+      programScope.registerDeclaration(decl);
     }
 
     return specifiers.get('*');
@@ -332,7 +342,16 @@ export function link({
       invariant(imported.assets != null);
       imported.assets.add(mod);
 
-      return t.callExpression(getIdentifier(mod, 'init'), []);
+      let initIdentifier = getIdentifier(mod, 'init');
+
+      // a variable so we can track the scope
+      let program = path.scope.getProgramParent().path;
+      let [decl] = program.unshiftContainer('body', [
+        t.variableDeclaration('var', [t.variableDeclarator(initIdentifier)]),
+      ]);
+      program.scope.registerDeclaration(decl);
+
+      return t.callExpression(initIdentifier, []);
     }
   }
 
@@ -611,45 +630,48 @@ export function link({
         // Recrawl to get all bindings.
         path.scope.crawl();
 
-        // Insert imports for external bundles
-        let imports = [];
         for (let file of importedFiles.values()) {
           if (file.bundle) {
-            imports.push(
-              ...format.generateBundleImports(
-                bundle,
-                file.bundle,
-                file.assets,
-                path.scope,
-              ),
+            format.generateBundleImports(
+              bundle,
+              file.bundle,
+              file.assets,
+              path,
             );
           } else {
-            imports.push(
-              ...format.generateExternalImport(bundle, file, path.scope),
-            );
+            format.generateExternalImport(bundle, file, path);
           }
         }
 
-        if (imports.length > 0) {
-          // Add import statements and update scope to collect references
-          path.unshiftContainer('body', imports);
-          path.scope.crawl();
+        if (process.env.PARCEL_BUILD_ENV !== 'production') {
+          verifyScopeState(path.scope);
         }
 
-        // Insert fake init functions that will be imported in other bundles,
-        // because `asset.meta.shouldWrap` isn't set in a packager if `asset` is
-        // not in the current bundle:
-        path.pushContainer(
-          'body',
-          [...referencedAssets]
-            .filter(a => !a.meta.shouldWrap)
-            .map(a => {
-              return FAKE_INIT_TEMPLATE({
-                INIT: getIdentifier(a, 'init'),
-                EXPORTS: t.identifier(assertString(a.meta.exportsIdentifier)),
-              });
-            }),
-        );
+        if (referencedAssets.size > 0) {
+          // Insert fake init functions that will be imported in other bundles,
+          // because `asset.meta.shouldWrap` isn't set in a packager if `asset` is
+          // not in the current bundle.
+          let decls = path.pushContainer(
+            'body',
+            ([...referencedAssets]: Array<Asset>)
+              .filter(a => !a.meta.shouldWrap)
+              .map(a => {
+                return FAKE_INIT_TEMPLATE({
+                  INIT: getIdentifier(a, 'init'),
+                  EXPORTS: t.identifier(assertString(a.meta.exportsIdentifier)),
+                });
+              }),
+          );
+          for (let decl of decls) {
+            path.scope.registerDeclaration(decl);
+            let returnId = decl.get<NodePath<Identifier>>(
+              'body.body.0.argument',
+            );
+            nullthrows(path.scope.getBinding(returnId.node.name)).reference(
+              returnId,
+            );
+          }
+        }
 
         // Generate exports
         let exported = format.generateExports(
@@ -661,10 +683,56 @@ export function link({
           options,
         );
 
+        // if (process.env.PARCEL_BUILD_ENV !== 'production') {
+        //   verifyScopeState(path.scope);
+        // }
+
         treeShake(path.scope, exported);
       },
     },
   });
 
   return ast;
+}
+
+function verifyScopeState(scope) {
+  let oldBindings = scope.bindings;
+  scope.crawl();
+  let newBindings = scope.bindings;
+
+  invariant(
+    Object.keys(oldBindings).length === Object.keys(newBindings).length,
+  );
+  for (let name of Object.keys(newBindings)) {
+    invariant(newBindings[name], name);
+    let {
+      scope: aScope,
+      constantViolations: aConstantViolations,
+      referencePaths: aReferencePaths,
+      identifier: aId,
+      path: aPath,
+      ...a
+    } = oldBindings[name];
+    let {
+      scope: bScope,
+      constantViolations: bConstantViolations,
+      referencePaths: bReferencePaths,
+      identifier: bId,
+      path: bPath,
+      ...b
+    } = newBindings[name];
+    invariant(aPath === bPath, name);
+    invariant(aId === bId, name);
+    invariant(aScope === bScope, name);
+    invariant.deepStrictEqual(a, b, name);
+
+    invariant(aConstantViolations.length === bConstantViolations.length, name);
+    for (let p of bConstantViolations) {
+      invariant(aConstantViolations.indexOf(p) >= 0, name);
+    }
+    invariant(aReferencePaths.length === bReferencePaths.length, name);
+    for (let p of bReferencePaths) {
+      invariant(aReferencePaths.indexOf(p) >= 0, name);
+    }
+  }
 }

@@ -1,4 +1,4 @@
-// @flow
+// @flow strict-local
 
 import type {
   Asset,
@@ -8,39 +8,58 @@ import type {
   Symbol,
 } from '@parcel/types';
 import type {NodePath} from '@babel/traverse';
-import type {Program} from '@babel/types';
+import type {
+  ClassDeclaration,
+  FunctionDeclaration,
+  Identifier,
+  ImportDeclaration,
+  Program,
+} from '@babel/types';
 import type {ExternalModule} from '../types';
 
 import * as t from '@babel/types';
-import {isImportDeclaration, isVariableDeclaration} from '@babel/types';
+import {
+  isClassDeclaration,
+  isFunctionDeclaration,
+  isImportDeclaration,
+  isVariableDeclaration,
+} from '@babel/types';
+import invariant from 'assert';
 import nullthrows from 'nullthrows';
 import {relative} from 'path';
 import {relativeBundlePath} from '@parcel/utils';
 import ThrowableDiagnostic from '@parcel/diagnostic';
 import rename from '../renamer';
-import {getName, getIdentifier} from '../utils';
+import {getName, removeReplaceBinding} from '../utils';
 
 export function generateBundleImports(
   from: Bundle,
   bundle: Bundle,
   assets: Set<Asset>,
+  path: NodePath<Program>,
 ) {
   let specifiers = [...assets].map(asset => {
-    let id = getIdentifier(asset, 'init');
-    return t.importSpecifier(id, id);
+    let id = getName(asset, 'init');
+    return t.importSpecifier(t.identifier(id), t.identifier(id));
   });
 
-  return [
+  let [decl] = path.unshiftContainer('body', [
     t.importDeclaration(
       specifiers,
       t.stringLiteral(relativeBundlePath(from, bundle)),
     ),
-  ];
+  ]);
+  for (let spec of decl.get<Array<NodePath<BabelNodeImportSpecifier>>>(
+    'specifiers',
+  )) {
+    removeReplaceBinding(path.scope, spec.node.local.name, spec, 'module');
+  }
 }
 
 export function generateExternalImport(
   bundle: Bundle,
   external: ExternalModule,
+  path: NodePath<Program>,
 ) {
   let {source, specifiers, isCommonJS} = external;
   let defaultSpecifier = null;
@@ -58,7 +77,7 @@ export function generateExternalImport(
     }
   }
 
-  let statements = [];
+  let statements: Array<ImportDeclaration> = [];
 
   // ESModule syntax allows combining default and namespace specifiers, or default and named, but not all three.
 
@@ -78,7 +97,23 @@ export function generateExternalImport(
     );
   }
 
-  return statements;
+  let decls = path.unshiftContainer('body', statements);
+  for (let decl of decls) {
+    let specifiers = decl.get<
+      Array<
+        NodePath<
+          | BabelNodeImportSpecifier
+          | BabelNodeImportDefaultSpecifier
+          | BabelNodeImportNamespaceSpecifier,
+        >,
+      >,
+    >('specifiers');
+    for (let specifier of specifiers) {
+      for (let name of Object.keys(specifier.getBindingIdentifiers())) {
+        removeReplaceBinding(path.scope, name, specifier, 'module');
+      }
+    }
+  }
 }
 
 export function generateExports(
@@ -96,7 +131,7 @@ export function generateExports(
     for (let {exportSymbol, symbol, asset} of bundleGraph.getExportedSymbols(
       entry,
     )) {
-      if (!symbol) {
+      if (symbol == null) {
         let relativePath = relative(options.inputFS.cwd(), asset.filePath);
         throw new ThrowableDiagnostic({
           diagnostic: {
@@ -146,7 +181,9 @@ export function generateExports(
       }
       ids.sort();
 
-      let exportedIdentifiersFiltered = [...exportedIdentifiers.entries()]
+      let exportedIdentifiersFiltered = ([
+        ...exportedIdentifiers.entries(),
+      ]: Array<[Symbol, Symbol]>)
         .filter(
           ([exportSymbol, symbol]) =>
             exportSymbol !== 'default' && ids.includes(symbol),
@@ -170,17 +207,22 @@ export function generateExports(
         areArraysStrictlyEqual(ids, exportedSymbolsBindings) &&
         !path.isImportDeclaration()
       ) {
-        path.replaceWith(t.exportNamedDeclaration(path.node, []));
+        // We don't update the references in `node` itself (e.g. init), because this statement
+        // will never be removed and therefore the shaking doesn't need correct
+        // information.  All existing references in `node` are "dead" but will also never be removed.
+        let [decl] = path.replaceWith(t.exportNamedDeclaration(node, []));
+
         for (let sym of exportedSymbols) {
           let id = nullthrows(exportedIdentifiers.get(sym));
           id = replacements.get(id) || id;
+          nullthrows(path.scope.getBinding(id)).reference(decl);
           rename(path.scope, id, sym);
           replacements.set(id, sym);
           exported.add(sym);
         }
 
         // If the default export is part of the declaration, add it as well
-        if (defaultExport) {
+        if (defaultExport != null) {
           defaultExport = replacements.get(defaultExport) || defaultExport;
           let binding = path.scope.getBinding(defaultExport);
           let insertPath = path;
@@ -192,22 +234,32 @@ export function generateExports(
           let [decl] = insertPath.insertAfter(
             t.exportDefaultDeclaration(t.identifier(defaultExport)),
           );
-          binding?.reference(decl.get('declaration'));
+          binding?.reference(decl);
         }
 
         // If there is only a default export, export the entire declaration.
       } else if (
         ids.length === 1 &&
-        defaultExport &&
+        defaultExport != null &&
         !isVariableDeclaration(node) &&
         !isImportDeclaration(node)
       ) {
-        // $FlowFixMe
-        path.replaceWith(t.exportDefaultDeclaration(node));
+        invariant(isFunctionDeclaration(node) || isClassDeclaration(node));
+        let binding = nullthrows(
+          path.scope.getBinding(nullthrows(node.id).name),
+        );
+        // We don't update the references in `node` itself (e.g. function body), because this statement
+        // will never be removed and therefore the shaking doesn't need correct
+        // information.  All existing references in `node` are "dead" but will also never be removed.
+        let [decl] = path.replaceWith(t.exportDefaultDeclaration(node));
+        binding.path = decl.get<
+          NodePath<FunctionDeclaration | ClassDeclaration>,
+        >('declaration');
+        binding.reference(decl);
 
         // Otherwise, add export statements after for each identifier.
       } else {
-        if (defaultExport) {
+        if (defaultExport != null) {
           defaultExport = replacements.get(defaultExport) || defaultExport;
           let binding = path.scope.getBinding(defaultExport);
           let insertPath = path;
@@ -219,7 +271,7 @@ export function generateExports(
           let [decl] = insertPath.insertAfter(
             t.exportDefaultDeclaration(t.identifier(defaultExport)),
           );
-          binding?.reference(decl.get('declaration'));
+          binding?.reference(decl.get<NodePath<Identifier>>('declaration'));
         }
 
         if (exportedSymbols.length > 0) {
@@ -234,7 +286,9 @@ export function generateExports(
             let [spec] = decl.unshiftContainer('specifiers', [
               t.exportSpecifier(t.identifier(sym), t.identifier(sym)),
             ]);
-            path.scope.getBinding(sym)?.reference(spec.get('local'));
+            path.scope
+              .getBinding(sym)
+              ?.reference(spec.get<NodePath<Identifier>>('local'));
           }
         }
       }
