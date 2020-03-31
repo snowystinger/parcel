@@ -7,6 +7,7 @@ import type {
   SourceLocation,
 } from '@parcel/types';
 import type {Diagnostic} from '@parcel/diagnostic';
+import type {SourceLocation as BabelSourceLocation} from '@babel/types';
 
 import ThrowableDiagnostic from '@parcel/diagnostic';
 import * as t from '@babel/types';
@@ -78,7 +79,7 @@ export function assertString(v: mixed): string {
 
 export function getThrowableDiagnosticForNode(
   message: string,
-  filePath: string,
+  filePath: ?string,
   loc: ?{
     +start: {|
       +line: number,
@@ -93,9 +94,12 @@ export function getThrowableDiagnosticForNode(
 ) {
   let diagnostic: Diagnostic = {
     message,
-    filePath: filePath,
     language: 'js',
   };
+
+  if (filePath) {
+    diagnostic.filePath = filePath;
+  }
   if (loc) {
     diagnostic.codeFrame = {
       codeHighlights: {
@@ -113,4 +117,15 @@ export function getThrowableDiagnosticForNode(
   return new ThrowableDiagnostic({
     diagnostic,
   });
+}
+
+export function convertBabelLoc(loc: ?BabelSourceLocation): ?SourceLocation {
+  if (!loc || !loc.filename) return null;
+
+  let {filename, start, end} = loc;
+  return {
+    filePath: filename,
+    start,
+    end,
+  };
 }

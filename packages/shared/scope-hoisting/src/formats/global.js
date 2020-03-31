@@ -9,6 +9,7 @@ import type {
   StringLiteral,
   VariableDeclaration,
 } from '@babel/types';
+import type {ExternalBundle, ExternalModule} from '../types';
 
 import * as t from '@babel/types';
 import template from '@babel/template';
@@ -17,6 +18,7 @@ import {
   assertString,
   getName,
   getIdentifier,
+  getThrowableDiagnosticForNode,
   isEntry,
   isReferenced,
 } from '../utils';
@@ -36,8 +38,7 @@ const IMPORTSCRIPTS_TEMPLATE = template.statement<
 
 export function generateBundleImports(
   from: Bundle,
-  bundle: Bundle,
-  assets: Set<Asset>,
+  {bundle, assets}: ExternalBundle,
 ) {
   let statements = [];
 
@@ -61,9 +62,11 @@ export function generateBundleImports(
   return statements;
 }
 
-export function generateExternalImport() {
-  throw new Error(
+export function generateExternalImport(_: Bundle, {loc}: ExternalModule) {
+  throw getThrowableDiagnosticForNode(
     'External modules are not supported when building for browser',
+    loc?.filePath,
+    loc,
   );
 }
 

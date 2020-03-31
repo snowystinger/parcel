@@ -9,7 +9,7 @@ import type {
 } from '@parcel/types';
 import type {NodePath} from '@babel/traverse';
 import type {Program} from '@babel/types';
-import type {ExternalModule} from '../types';
+import type {ExternalBundle, ExternalModule} from '../types';
 
 import * as t from '@babel/types';
 import {isImportDeclaration, isVariableDeclaration} from '@babel/types';
@@ -21,8 +21,7 @@ import {getName, getIdentifier, getThrowableDiagnosticForNode} from '../utils';
 
 export function generateBundleImports(
   from: Bundle,
-  bundle: Bundle,
-  assets: Set<Asset>,
+  {bundle, assets}: ExternalBundle,
 ) {
   let specifiers = [...assets].map(asset => {
     let id = getIdentifier(asset, 'init');
