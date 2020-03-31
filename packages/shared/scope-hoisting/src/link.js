@@ -6,6 +6,7 @@ import type {
   BundleGraph,
   PluginOptions,
   Symbol,
+  SourceLocation,
 } from '@parcel/types';
 import type {ExternalModule, ExternalBundle} from './types';
 import type {
@@ -80,7 +81,7 @@ export function link({
 |}) {
   let format = OutputFormats[bundle.env.outputFormat];
   let replacements: Map<Symbol, Symbol> = new Map();
-  let imports: Map<Symbol, ?[Asset, Symbol]> = new Map();
+  let imports: Map<Symbol, ?[Asset, Symbol, ?SourceLocation]> = new Map();
   let assets: Map<string, Asset> = new Map();
   let exportsMap: Map<Symbol, Asset> = new Map();
 
@@ -114,7 +115,12 @@ export function link({
       // If the dependency was excluded, it will be replaced by the output format at the very end.
       if (resolved || dep.isDeferred) {
         for (let [imported, local] of dep.symbols) {
-          imports.set(local, resolved ? [resolved, imported] : null);
+          imports.set(
+            local,
+            resolved
+              ? [resolved, imported, dep.symbolsLocs.get(imported)]
+              : null,
+          );
         }
       }
     }
@@ -125,7 +131,7 @@ export function link({
   });
 
   function resolveSymbol(inputAsset, inputSymbol: Symbol) {
-    let {asset, exportSymbol, symbol} = bundleGraph.resolveSymbol(
+    let {asset, exportSymbol, symbol, loc} = bundleGraph.resolveSymbol(
       inputAsset,
       inputSymbol,
     );
@@ -134,6 +140,7 @@ export function link({
         asset: asset,
         symbol: exportSymbol,
         identifier: undefined,
+        loc,
       };
     }
 
@@ -148,11 +155,11 @@ export function link({
       identifier = replacements.get(identifier);
     }
 
-    return {asset: asset, symbol: exportSymbol, identifier};
+    return {asset: asset, symbol: exportSymbol, identifier, loc};
   }
 
   // path is an Identifier like $id$import$foo that directly imports originalName from originalModule
-  function replaceImportNode(originalModule, originalName, path) {
+  function replaceImportNode(originalModule, originalName, path, depLoc) {
     let {asset: mod, symbol, identifier} = resolveSymbol(
       originalModule,
       originalName,
@@ -171,11 +178,11 @@ export function link({
 
     // If this is an ES6 module, throw an error if we cannot resolve the module
     if (!node && !mod.meta.isCommonJS && mod.meta.isES6Module) {
-      let relativePath = relative(options.inputFS.cwd(), mod.filePath);
+      let relativePath = relative(options.projectRoot, mod.filePath);
       throw getThrowableDiagnosticForNode(
         `${relativePath} does not export '${symbol}'`,
-        nullthrows(path.node.loc?.filename),
-        path.node,
+        depLoc?.filePath ?? nullthrows(path.node.loc?.filename),
+        depLoc,
       );
     }
 
@@ -473,7 +480,7 @@ export function link({
             throw getThrowableDiagnosticForNode(
               "`require.resolve` calls for excluded assets are only supported with outputFormat: 'commonjs'",
               mapped.filePath,
-              path.node,
+              path.node.loc,
             );
           }
 
@@ -484,7 +491,7 @@ export function link({
           throw getThrowableDiagnosticForNode(
             "`require.resolve` calls for bundled modules or bundled assets aren't supported with scope hoisting",
             mapped.filePath,
-            path.node,
+            path.node.loc,
           );
         }
       }
@@ -599,8 +606,8 @@ export function link({
           // import was deferred
           node = t.objectExpression([]);
         } else {
-          let [asset, symbol] = imported;
-          node = replaceImportNode(asset, symbol, path);
+          let [asset, symbol, loc] = imported;
+          node = replaceImportNode(asset, symbol, path, loc);
 
           // If the export does not exist, replace with an empty object.
           if (!node) {

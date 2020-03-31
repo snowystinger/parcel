@@ -265,7 +265,8 @@ export type DependencyOptions = {|
   +env?: EnvironmentOpts,
   +meta?: Meta,
   +target?: Target,
-  +symbols?: Map<Symbol, Symbol>,
+  +symbols?: $ReadOnlyMap<Symbol, Symbol>,
+  +symbolsLocs?: $ReadOnlyMap<Symbol, SourceLocation>,
 |};
 
 export interface Dependency {
@@ -283,8 +284,12 @@ export interface Dependency {
   +target: ?Target;
   +sourceAssetId: ?string;
   +sourcePath: ?string;
-  +symbols: Map<Symbol, Symbol>;
+  // (imported symbol -> variable that it is used as)
+  +symbols: $ReadOnlyMap<Symbol, Symbol>;
+  +symbolsLocs: $ReadOnlyMap<Symbol, SourceLocation>;
   +pipeline: ?string;
+
+  setSymbol(exportSymbol: Symbol, symbol: Symbol, loc: ?SourceLocation): void;
 }
 
 export type File = {|
@@ -308,7 +313,9 @@ export interface BaseAsset {
   +isSplittable: ?boolean;
   +isSource: boolean;
   +type: string;
-  +symbols: Map<Symbol, Symbol>;
+  // (symbol exported by this -> name of binding to export)
+  +symbols: $ReadOnlyMap<Symbol, Symbol>;
+  +symbolsLocs: $ReadOnlyMap<Symbol, SourceLocation>;
   +sideEffects: boolean;
   +uniqueKey: ?string;
   +astGenerator: ?ASTGenerator;
@@ -340,6 +347,9 @@ export interface MutableAsset extends BaseAsset {
   addDependency(dep: DependencyOptions): string;
   addIncludedFile(file: File): void;
   addURLDependency(url: string, opts: $Shape<DependencyOptions>): string;
+  setSymbol(exportSymbol: Symbol, symbol: Symbol, loc: ?SourceLocation): void;
+  clearSymbols(): void;
+
   isASTDirty(): boolean;
   setAST(AST): void;
   setBuffer(Buffer): void;
@@ -416,7 +426,8 @@ export type TransformerResult = {|
   +meta?: Meta,
   +pipeline?: ?string,
   +sideEffects?: boolean,
-  +symbols?: Map<Symbol, Symbol>,
+  +symbols?: $ReadOnlyMap<Symbol, Symbol>;
+  +symbolsLocs?: $ReadOnlyMap<Symbol, SourceLocation>;
   +type: string,
   +uniqueKey?: ?string,
 |};
@@ -576,6 +587,8 @@ export type SymbolResolution = {|
   +asset: Asset,
   +exportSymbol: Symbol | string,
   +symbol: void | Symbol,
+  // the location of the specifier that lead to this result
+  +loc: ?SourceLocation,
 |};
 
 export interface Bundle {

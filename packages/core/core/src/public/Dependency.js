@@ -102,7 +102,16 @@ export default class Dependency implements IDependency {
     return this.#dep.symbols;
   }
 
+  get symbolsLocs(): Map<Symbol, SourceLocation> {
+    return this.#dep.symbolsLocs;
+  }
+
   get pipeline(): ?string {
     return this.#dep.pipeline;
+  }
+
+  setSymbol(exportSymbol: Symbol, symbol: Symbol, loc: ?SourceLocation): void {
+    this.#dep.symbols.set(exportSymbol, symbol);
+    if (loc) this.#dep.symbolsLocs.set(exportSymbol, loc);
   }
 }

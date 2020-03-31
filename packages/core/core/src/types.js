@@ -95,6 +95,7 @@ export type Dependency = {|
   sourceAssetId: ?string,
   sourcePath: ?string,
   symbols: Map<Symbol, Symbol>,
+  symbolsLocs: Map<Symbol, SourceLocation>,
   pipeline?: ?string,
 |};
 
@@ -120,6 +121,7 @@ export type Asset = {|
   astKey: ?string,
   astGenerator: ?ASTGenerator,
   symbols: Map<Symbol, Symbol>,
+  symbolsLocs: Map<Symbol, SourceLocation>,
   sideEffects: boolean,
   uniqueKey: ?string,
   configPath?: FilePath,
